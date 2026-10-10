@@ -1,0 +1,119 @@
+==================================================================
+内容类型: API 接口规范
+部门: 平台研发部
+系统: Polaris Open Platform
+版本: v1.5
+最后更新: 2026-07-18
+机密等级: 内部级 (Internal)
+==================================================================
+
+一、通用约定
+1.1 基础 URL: https://openapi.polaris.internal/v2
+1.2 认证方式: HMAC-SHA256 签名 + AccessKey/SecretKey
+1.3 请求格式: application/json; charset=utf-8
+1.4 响应格式: 统一包裹在 {"code": 0, "message": "success", "data": {...}} 中
+
+二、内部认证接口
+POST /auth/token
+  功能: 获取内部服务调用令牌
+  请求体: {"access_key": "string", "signature": "string", "timestamp": 1234567890}
+  响应: {"token": "plr_xxxxx", "expires_in": 3600}
+  注意: token 有效期 1 小时，到期前 5 分钟自动续期
+
+三、知识库管理接口 (Knowledge Base API)
+3.1 POST /kb/documents
+  功能: 上传文档至知识库
+  请求体: {"title": "string", "content": "text", "tags": ["string"], "namespace": "string"}
+  约束: content 不得超过 100,000 字符，单次批量最多 50 篇
+  响应: {"doc_id": "kb_xxxxxxxx", "chunk_count": 12}
+
+3.2 POST /kb/query
+  功能: 检索知识库
+  请求体: {"query": "string", "top_k": 10, "namespace": "string", "min_score": 0.65}
+  约束: top_k 最大不超过 50，query 最少 3 个中文字符
+  响应: {"results": [{"doc_id": "kb_xxx", "chunk": "text", "score": 0.92, "metadata": {...}}]}
+
+3.3 DELETE /kb/documents/{doc_id}
+  功能: 删除知识库文档（软删除，保留 30 天）
+
+四、内部通知通道
+4.1 渠道名称: Orion Notifier
+4.2 支持通知类型: 邮件 (SMTP)、企业微信 Webhook、内部 IM (PolarTalk)、短信
+4.3 POST /notification/send
+  请求体: {"channel": "polar_talk", "target": "user_id", "title": "string", "body": "string", "priority": "high|normal|low"}
+  注意: high 优先级的通知会绕过免打扰设置，每天最多发送 3 条 high 优先级通知
+
+五、错误码定义
+  0    - 成功
+  1001 - 签名验证失败
+  1002 - AccessKey 已过期或被禁用
+  1003 - 请求频率超限（单密钥每秒 100 次）
+  2001 - 文档内容超长
+  2002 - 命名空间不存在
+  2003 - 文档不存在或已被删除
+  3001 - 内部服务异常，请稍后重试
+  3002 - 上游服务超时（默认超时时间 30 秒）
+
+==================================================================
+API 管理负责人: 林晓 (平台架构师)
+==================================================================
+内容类型: API 接口规范
+部门: 平台研发部
+系统: Polaris Open Platform
+版本: v1.5
+最后更新: 2026-07-18
+机密等级: 内部级 (Internal)
+
+一、通用约定
+1.1 基础URL: https://openapi.polaris.internal/v2，生产环境与测试环境共用域名，通过请求头 X-Environment 区分（production / staging / dev）。
+1.2 认证方式采用 HMAC-SHA256 签名机制。请求头中需携带 Authorization: POLARIS {AccessKey}:{Signature}，签名内容为 HTTP Method + URI + 请求体 + Timestamp 拼接后的字符串。Signature 有效期5分钟，超过时间的请求将被拒绝。
+1.3 请求格式统一为 application/json; charset=utf-8，不支持 XML 或其他格式。数值类型使用 Number，金额精确到分，时间统一使用 Unix 毫秒时间戳。
+1.4 响应格式统一包裹在标准结构中：{"code": 0, "message": "success", "data": {...}, "request_id": "唯一请求追踪ID"}。错误时 data 字段返回 null，message 字段返回具体错误描述。request_id 需在日志中记录，后续排查问题时提供。
+1.5 限流策略依据 AccessKey 级别区分：普通 Key 每秒100次，高级 Key 每秒500次，内部系统 Key 每秒2000次。超限请求返回 429 Too Many Requests，响应头 X-RateLimit-Reset 指示限流重置时间。
+
+二、内部认证接口
+POST /auth/token
+功能: 获取内部服务调用令牌（Token），适用于服务间通信场景而非用户登录场景。每次调用返回临时令牌，调用时需要提供 AccessKey、时间戳和签名。请求体格式为 {"access_key": "string", "signature": "string", "timestamp": 1234567890}。成功响应返回 {"token": "plr_xxxxx", "expires_in": 3600, "refresh_token": "plr_refresh_xxxxx"}。token 有效期1小时，到期前5分钟可通过 refresh_token 自动续期而不需要重新签名。每个 AccessKey 同时有效的 token 数量不得超过10个。Token 传递方式为请求头 Authorization: Bearer {token}。
+
+三、知识库管理接口 (Knowledge Base API)
+
+3.1 POST /kb/documents
+功能: 上传文档至知识库，支持同步处理和异步处理两种模式。同步模式下 request_id 返回后文档已入库，适合小文档；异步模式下返回实际处理结果，适合大文档或批量导入。请求体: {"title": "string", "content": "text", "tags": ["string"], "namespace": "string", "mode": "sync"|"async", "chunk_strategy": "fixed"|"semantic"|"mixed"}。约束: content 不得超过 100,000 字符，单次批量最多50篇。响应: {"doc_id": "kb_xxxxxxxx", "chunk_count": 12, "status": "indexed"}。异步模式下 chunk_count 和 status 返回 pending，需通过 GET /kb/documents/{doc_id}/status 查询最终状态。
+
+3.2 POST /kb/query
+功能: 检索知识库，支持向量检索、关键词检索和混合检索三种模式。默认使用混合检索，权重为向量0.6 + BM25 0.4。请求体: {"query": "string", "top_k": 10, "namespace": "string", "min_score": 0.65, "search_mode": "hybrid"|"vector"|"keyword", "rerank": true|false, "filter": {"tags": ["tag1", "tag2"]}}。约束: top_k 最大不超过50，query 最少3个中文字符，min_score 取值范围 0.0-1.0。响应: {"results": [{"doc_id": "kb_xxx", "chunk": "匹配文本段落", "score": 0.92, "metadata": {"title": "文档标题", "tags": ["tag1"], "namespace": "ns1", "created_at": 1234567890}}], "total": 100}。rerank 开启时会额外增加50毫秒延迟但排序精度提升约15%。
+
+3.3 DELETE /kb/documents/{doc_id}
+功能: 删除知识库文档。删除采用软删除机制，文档标记为 deleted 状态后在检索中不可见，但在数据库中保留30天。30天内可通过 POST /kb/documents/{doc_id}/restore 接口恢复。物理删除需要管理员权限在 Polaris 管理后台操作。
+
+3.4 POST /kb/namespaces
+功能: 创建命名空间用于文档隔离。不同部门或项目的文档放置在不同 namespace 下，实现访问权限控制。请求体: {"namespace": "string", "description": "string", "access_level": "public"|"internal"|"confidential"}。每个项目最多创建20个 namespace。
+
+四、内部通知通道
+4.1 通知引擎名称为 Orion Notifier v3.0，支持多渠道分发。渠道包括邮件（SMTP 协议，发件人 noreply@polaris.internal）、企业微信 Webhook（通过内部 Bot 机器人）、内部 IM 系统 PolarTalk（支持文本、图文、富文本消息）、短信（通过阿里云短信接口发送，仅用于P0级别告警）。每个渠道都支持消息模板，模板在 Orion 管理后台配置（地址：orion.polaris.internal/admin/templates）。
+
+4.2 POST /notification/send
+请求体: {"channel": "polar_talk"|"email"|"wechat"|"sms", "target": "user_id or group_id", "title": "string（邮件/PolarTalk必填）", "body": "string", "priority": "high"|"normal"|"low", "schedule_at": 可选定时发送时间戳}。high 优先级的通知会绕过用户的免打扰设置，但每天最多发送3条 high 通知给同一个用户，超限消息降级为 normal。响应: {"message_id": "msg_xxxxxxxx", "status": "queued"}。消息投递状态可通过 GET /notification/{message_id}/status 查询。
+
+五、错误码定义
+通用错误:
+0 - 成功。请求处理完成，data 字段包含有效数据。
+1001 - 签名验证失败。请检查 AccessKey 是否有效、签名算法是否正确、是否在5分钟有效期内。
+1002 - AccessKey 已过期或被禁用。请联系平台管理员在 PolarAccess 系统中重新激活。
+1003 - 请求频率超限。单密钥每秒最多100次，请降低请求频率或联系管理员升级。
+1004 - IP 白名单校验失败。当前请求 IP 不在该 AccessKey 绑定的白名单中。
+
+知识库错误:
+2001 - 文档内容超长。单篇文档 content 字段不得超过100,000字符，请分篇上传。
+2002 - 命名空间不存在。请先通过 POST /kb/namespaces 创建 namespace。
+2003 - 文档不存在或已被删除。该 doc_id 无效或已超过30天软删除保留期被物理清除。
+2004 - 向量索引构建失败。请检查文档内容是否为有效文本，如果是图片或二进制文件请先转为文字。
+
+系统错误:
+3001 - 内部服务异常，请稍后重试。如果持续出现请联系 SRE 检查服务状态。
+3002 - 上游服务超时。默认超时时间为30秒，超时后请求会自动取消并返回此错误码。
+3003 - 服务正在维护中。每周四凌晨2:00-4:00为计划维护窗口，维护期间部分接口返回此错误码。
+
+API 管理负责人: 林晓 (平台架构师)
+审批日期: 2026-07-18
+下次修订时间: 2027-01-18

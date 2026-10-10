@@ -1,0 +1,58 @@
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+.classpath
+.project
+.settings/
+!.mvn/wrapper/maven-wrapper.jar
+!backend/src/main/resources/**/*.jar
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+.pnpm-store/
+coverage/
+*.local
+
+# Environment
+.env
+.env.*
+!.env.example
+*.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and runtime files
+*.log
+logs/
+backend/logs/
+backend/uploads/*
+!backend/uploads/.gitkeep
+*.pid
+
+# Local databases and caches
+data/
+mysql-data/
+elasticsearch-data/
+es-data/
+.cache/
+
+# Keep project documentation in version control
+!README.md
+!docs/
+!docs/**

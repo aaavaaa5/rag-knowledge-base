@@ -1,0 +1,91 @@
+==================================================================
+内容类型: 技术架构文档
+部门: 研发部
+项目: 北极光 V8 数据中台
+版本: v2.7
+最后更新: 2026-07-10
+机密等级: 机密级 (Confidential)
+==================================================================
+
+一、系统概述
+北极光 V8 数据中台是公司核心数据处理平台，负责每日约 50TB 数据的实时采集、清洗、存储与分析。
+系统采用微服务架构，部署于公司自建私有云（项目代号：北极星Polaris），共 128 个节点。
+
+二、核心组件
+2.1 数据采集层 (Ingestion Layer)
+  - 组件名: Aurora Collector v4.3
+  - 支持数据源: MySQL Binlog、Kafka、REST API、FTP/SFTP
+  - 内部通道协议: AGP (Aurora Gateway Protocol)，基于 gRPC + Protobuf 封装
+  - 限流策略: 单节点每秒 10,000 条记录，超限数据写入本地磁盘缓冲队列 /data/aurora/buffer/
+
+2.2 数据处理层 (Processing Layer)
+  - 组件名: Nebula Processor v6.1
+  - 计算引擎: 基于 Apache Flink 1.18 定制版，内部代号 "Flink-NE"
+  - 核心改进: 自定义 StateBackend 使用公司的分布式文件系统 PolarisFS，支持增量 Checkpoint
+  - 窗口策略: 事件时间窗口，默认 watermark 延迟 30 秒
+
+2.3 数据存储层 (Storage Layer)
+  - OLAP 引擎: PolarisOLAP（基于 ClickHouse 22.8 定制），表引擎统一使用 ReplicatedMergeTree
+  - 时序数据: TimeStream v2.0（基于 InfluxDB 2.x 定制），保留策略为 90 天热数据 + 365 天温数据
+  - 元数据: MetaDB（基于 etcd + PostgreSQL），每日自动全量备份至异地机房
+
+三、内部服务发现
+所有微服务注册至内部 Consul 集群（地址: 10.10.0.10:8500），服务命名规则：
+  {项目代号}-{模块名}-{序号}
+  示例: v8-ingestion-01, v8-processing-03, v8-storage-02
+
+四、部署流水线
+4.1 CI/CD 工具链：GitLab CI → 内部 Harbor 镜像仓库（harbor.polaris.internal）→ K8s 集群
+4.2 环境划分：
+  - dev: 4 节点，ingress 域名 dev-api.polaris.internal
+  - staging: 8 节点，ingress 域名 staging-api.polaris.internal
+  - production: 64 节点，ingress 域名 api.polaris.internal
+4.3 发布审批：staging 到 production 需要 CTO 在发布平台（release.polaris.internal）上审批，且必须至少有 2 名 SRE 在线确认。
+
+五、关键技术指标 (KPI - 2026 Q2)
+  - 数据可用性 SLA: 99.99%
+  - 端到端延迟 P99: 3.2 秒以内
+  - 每日处理记录数: 62 亿条
+  - 历史数据总量: 4.2 PB
+
+==================================================================
+技术负责人: 陈思远 (CTO)
+文档审批: 架构评审委员会 (ARC)
+==================================================================
+内容类型: 技术架构文档
+部门: 研发部
+项目: 北极光 V8 数据中台
+版本: v2.7
+最后更新: 2026-07-10
+机密等级: 机密级 (Confidential)
+
+一、系统概述
+北极光 V8 数据中台（内部代号 Polaris V8）是公司核心数据处理平台，负责每日约50TB数据的实时采集、清洗、存储与分析。系统服务于公司三大业务线：智能营销平台（SmartAds）、用户行为分析（UserInsight）和实时风控系统（RiskGuard）。系统采用微服务架构，部署于公司自建私有云（项目代号：北极星 Polaris），共128个节点，分布在深圳主数据中心和杭州灾备数据中心之间。
+
+二、核心组件详解
+
+2.1 数据采集层 (Ingestion Layer)
+组件名: Aurora Collector v4.3，部署24个节点，每个节点配置16核CPU、64GB内存、4TB NVMe SSD。支持数据源包括 MySQL Binlog、Kafka、REST API、FTP/SFTP，以及自定义的 SDK上报通道。内部通道协议为 AGP (Aurora Gateway Protocol)，基于 gRPC + Protobuf 封装，支持双向流式传输和自动重连。限流策略为单节点每秒10,000条记录，超限数据写入本地磁盘缓冲队列 /data/aurora/buffer/，缓冲区满时触发背压信号通知上游降低发送速率。采集延迟监控通过 Grafana 面板（地址：monitor.polaris.internal/d/aurora）实时查看。
+
+2.2 数据处理层 (Processing Layer)
+组件名: Nebula Processor v6.1，部署32个节点。计算引擎基于 Apache Flink 1.18 定制版，内部代号 Flink-NE，主要改进包括：自定义 StateBackend 使用公司自研分布式文件系统 PolarisFS（替代原 RocksDB），支持增量 Checkpoint 与异步快照，Checkpoint 间隔默认为60秒。窗口策略采用事件时间窗口，默认 watermark 延迟30秒，支持乱序数据容忍度。处理拓扑分为三个 Pipeline：实时ETL管道（延迟要求 < 5秒）、聚合计算管道（延迟要求 < 30秒）、机器学习特征工程管道（延迟要求 < 60秒）。
+
+2.3 数据存储层 (Storage Layer)
+OLAP引擎为 PolarisOLAP（基于 ClickHouse 22.8 定制），部署16节点，表引擎统一使用 ReplicatedMergeTree，数据副本数为3。时序数据存储使用 TimeStream v2.0（基于 InfluxDB 2.x 定制），保留策略为热数据90天（存储在 NVMe SSD）、温数据365天（存储在 SATA SSD）。元数据管理使用 MetaDB，基于 etcd + PostgreSQL 构建，每日凌晨2点自动全量备份至杭州灾备机房，备份保留30天。数据冷备使用 AWS S3 Glacier，每月一次全量归档，归档保留3年。
+
+三、内部服务发现与治理
+所有微服务注册至内部 Consul 集群，地址为 10.10.0.10:8500，集群由5个Server节点和20个Client节点组成。服务命名规则为 {项目代号}-{模块名}-{序号}，例如 v8-ingestion-01、v8-processing-03、v8-storage-02。服务健康检查每15秒执行一次，连续3次失败自动摘除并触发告警。服务间调用采用内部 RPC 框架 PolarisRPC，基于 gRPC 封装，支持超时控制（默认 30秒）、熔断（窗口内50%请求失败触发）、限流（单服务每秒5000 QPS上限）。
+
+四、部署流水线
+CI/CD 工具链为 GitLab CI → 内部 Harbor 镜像仓库（harbor.polaris.internal）→ 基于 Kubernetes 1.28 的容器编排平台。环境划分：dev环境4节点，ingress 域名 dev-api.polaris.internal；staging环境8节点，ingress 域名 staging-api.polaris.internal；production环境64节点，ingress 域名 api.polaris.internal。发布审批流程严格：代码合并到 master 分支后自动构建镜像并部署至 staging，staging 验证通过后由 CTO 在发布平台（release.polaris.internal）审批，审批时需至少有2名 SRE 在线确认后方可推送至 production。发布采用蓝绿部署策略，切换过程持续观察15分钟，若发现错误率上升超过1%则自动回滚。
+
+五、监控与告警
+全链路监控基于 Prometheus + Grafana + 自研告警引擎 PolarisAlert。核心指标包括数据可用性 SLA 99.99%、端到端延迟 P99 3.2秒以内、每日处理记录数62亿条、历史数据总量4.2PB。告警分级：P0（系统宕机，5分钟内通知 CTO 及值班 SRE）、P1（核心功能受损，15分钟通知 VP 级）、P2（非核心功能异常，30分钟通知模块负责人）、P3（轻微异常，记录日志次日报表处理）。告警渠道为 PolarTalk 内部 IM + 企业微信 + 短信，P0 级别同时通过电话通知。
+
+六、容量规划
+系统当前平均资源利用率约为65%，按照业务增长预测（月均8%），预计2026年10月需扩容至160节点。扩容流程由 SRE 团队在周二和周四的维护窗口执行，每次扩容不超过8节点。每年12月做一次全量压测，压测报告提交至架构评审委员会（ARC）备案。
+
+技术负责人: 陈思远 (CTO)
+文档审批: 架构评审委员会 (ARC)
+审批日期: 2026-07-10
+下次评审日期: 2026-10-10
